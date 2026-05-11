@@ -96,11 +96,15 @@ export const PRESETS: Record<StatusLinePreset, PresetDef> = {
   },
 
   custom: {
-    leftSegments: ["model", "shell_mode", "path", "git"],
-    rightSegments: ["token_total", "cost", "context_pct"],
+    leftSegments: ["model", "shell_mode", "git"],
+    rightSegments: ["path", "context_pct"],
     separator: "powerline-thin",
     colors: DEFAULT_COLORS,
-    segmentOptions: {},
+    segmentOptions: {
+      model: { showThinkingLevel: true },
+      path: { mode: "abbreviated", maxLength: 50 },
+      git: { showBranch: true, showStaged: true, showUnstaged: true, showUntracked: true },
+    },
   },
 };
 

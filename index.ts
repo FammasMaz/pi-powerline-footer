@@ -871,49 +871,32 @@ function buildContentFromParts(
   return " " + parts.join(` ${sepAnsi}${sep}${ansi.reset} `) + ansi.reset + " ";
 }
 
-/**
- * Responsive segment layout - fits segments into top bar, overflows to secondary row.
- * When terminal is wide enough, secondary segments move up to top bar.
- * When narrow, top bar segments overflow down to secondary row.
- */
-function computeResponsiveLayout(
-  ctx: SegmentContext,
+type RenderedSegmentPart = { content: string; width: number };
+
+function renderVisibleSegments(segmentIds: StatusLineSegmentId[], ctx: SegmentContext): RenderedSegmentPart[] {
+  const segments: RenderedSegmentPart[] = [];
+  for (const segId of segmentIds) {
+    const { content, width, visible } = renderSegmentWithWidth(segId, ctx);
+    if (visible) segments.push({ content, width });
+  }
+  return segments;
+}
+
+function computeSequentialLayout(
+  renderedSegments: RenderedSegmentPart[],
   presetDef: ReturnType<typeof getPreset>,
-  availableWidth: number
+  availableWidth: number,
 ): { topContent: string; secondaryContent: string } {
   const separatorDef = getSeparator(presetDef.separator);
-  const sepWidth = visibleWidth(separatorDef.left) + 2; // separator + spaces around it
-  
-  // Get all segments: primary first, then secondary
-  const mergedSegments = mergeSegmentsWithCustomItems(presetDef, config.customItems);
-  const primaryIds = [...mergedSegments.leftSegments, ...mergedSegments.rightSegments];
-  const secondaryIds = mergedSegments.secondarySegments;
-  const allSegmentIds = [...primaryIds, ...secondaryIds];
-  
-  // Render all segments and get their widths
-  const renderedSegments: { content: string; width: number }[] = [];
-  for (const segId of allSegmentIds) {
-    const { content, width, visible } = renderSegmentWithWidth(segId, ctx);
-    if (visible) {
-      renderedSegments.push({ content, width });
-    }
-  }
-  
-  if (renderedSegments.length === 0) {
-    return { topContent: "", secondaryContent: "" };
-  }
-  
-  // Calculate how many segments fit in top bar
-  // Account for: leading space (1) + trailing space (1) = 2 chars overhead
+  const sepWidth = visibleWidth(separatorDef.left) + 2;
   const baseOverhead = 2;
   let currentWidth = baseOverhead;
-  let topSegments: string[] = [];
-  let overflowSegments: { content: string; width: number }[] = [];
+  const topSegments: string[] = [];
+  const overflowSegments: RenderedSegmentPart[] = [];
   let overflow = false;
-  
+
   for (const seg of renderedSegments) {
     const neededWidth = seg.width + (topSegments.length > 0 ? sepWidth : 0);
-    
     if (!overflow && currentWidth + neededWidth <= availableWidth) {
       topSegments.push(seg.content);
       currentWidth += neededWidth;
@@ -922,26 +905,72 @@ function computeResponsiveLayout(
       overflowSegments.push(seg);
     }
   }
-  
-  // Fit overflow segments into secondary row (same width constraint)
-  // Stop at first non-fitting segment to preserve ordering
+
   let secondaryWidth = baseOverhead;
-  let secondarySegments: string[] = [];
-  
+  const secondarySegments: string[] = [];
   for (const seg of overflowSegments) {
     const neededWidth = seg.width + (secondarySegments.length > 0 ? sepWidth : 0);
-    if (secondaryWidth + neededWidth <= availableWidth) {
-      secondarySegments.push(seg.content);
-      secondaryWidth += neededWidth;
-    } else {
-      break;
-    }
+    if (secondaryWidth + neededWidth > availableWidth) break;
+    secondarySegments.push(seg.content);
+    secondaryWidth += neededWidth;
   }
-  
+
   return {
     topContent: buildContentFromParts(topSegments, presetDef),
     secondaryContent: buildContentFromParts(secondarySegments, presetDef),
   };
+}
+
+function buildSplitContentFromParts(
+  leftParts: string[],
+  rightParts: string[],
+  presetDef: ReturnType<typeof getPreset>,
+  availableWidth: number,
+): string {
+  const left = buildContentFromParts(leftParts, presetDef);
+  const right = buildContentFromParts(rightParts, presetDef);
+  if (!right) return left;
+  const gap = Math.max(0, availableWidth - visibleWidth(left) - visibleWidth(right));
+  return left + " ".repeat(gap) + right;
+}
+
+/**
+ * Responsive segment layout - left and right groups share the top bar when they fit.
+ * Narrow terminals fall back to the original ordered overflow behavior.
+ */
+function computeResponsiveLayout(
+  ctx: SegmentContext,
+  presetDef: ReturnType<typeof getPreset>,
+  availableWidth: number
+): { topContent: string; secondaryContent: string } {
+  const mergedSegments = mergeSegmentsWithCustomItems(presetDef, config.customItems);
+  const leftSegments = renderVisibleSegments(mergedSegments.leftSegments, ctx);
+  const rightSegments = renderVisibleSegments(mergedSegments.rightSegments, ctx);
+  const secondarySegments = renderVisibleSegments(mergedSegments.secondarySegments, ctx);
+  const allSegments = [...leftSegments, ...rightSegments, ...secondarySegments];
+
+  if (allSegments.length === 0) {
+    return { topContent: "", secondaryContent: "" };
+  }
+
+  if (rightSegments.length === 0) {
+    return computeSequentialLayout(allSegments, presetDef, availableWidth);
+  }
+
+  const leftParts = leftSegments.map((seg) => seg.content);
+  const rightParts = rightSegments.map((seg) => seg.content);
+  const leftContent = buildContentFromParts(leftParts, presetDef);
+  const rightContent = buildContentFromParts(rightParts, presetDef);
+  const splitWidth = visibleWidth(leftContent) + visibleWidth(rightContent);
+
+  if (splitWidth <= availableWidth) {
+    return {
+      topContent: buildSplitContentFromParts(leftParts, rightParts, presetDef, availableWidth),
+      secondaryContent: buildContentFromParts(secondarySegments.map((seg) => seg.content), presetDef),
+    };
+  }
+
+  return computeSequentialLayout(allSegments, presetDef, availableWidth);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

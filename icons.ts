@@ -29,16 +29,16 @@ export const THINKING_TEXT_UNICODE: Record<string, string> = {
   low: "[low]",
   medium: "[med]",
   high: "[high]",
-  xhigh: "[xhi]",
+  xhigh: "[xhigh]",
 };
 
 // Thinking level display text (Nerd Fonts - with icons)
 export const THINKING_TEXT_NERD: Record<string, string> = {
-  minimal: "\u{F0E7} min",   // lightning bolt
-  low: "\u{F10C} low",       // circle outline
-  medium: "\u{F192} med",    // dot circle
-  high: "\u{F111} high",     // circle
-  xhigh: "\u{F06D} xhi",     // fire
+  minimal: "\u{F0E7} min",     // lightning bolt
+  low: "\u{F10C} low",         // circle outline
+  medium: "\u{F192} med",      // dot circle
+  high: "\u{F111} high",       // circle
+  xhigh: "\u{F06D} xhigh",     // fire
 };
 
 // Get thinking text based on font support
