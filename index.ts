@@ -1422,7 +1422,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
   pi.on("agent_start", async (_event, ctx) => {
     isStreaming = true;
     liveAssistantUsage = null;
-    streamMetrics.onAgentStart();
+    streamMetrics.onAgentStart(pendingAssistantRequestStartAt ?? Date.now());
     startStreamingMetricsRefresh();
     onVibeAgentStart();
     dismissWelcome(ctx);

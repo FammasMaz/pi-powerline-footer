@@ -19,6 +19,21 @@ test("formatStreamMetricsLine shows placeholders when empty", () => {
   assert.equal(formatStreamMetricsLine({}, false), "TPS - | AVG - | TTFT -");
 });
 
+test("TTFT updates session average even with zero output tokens", () => {
+  const tracker = createStreamMetricsTracker();
+  tracker.onAgentStart(Date.now() - 2000);
+  tracker.onMessageUpdate("x", { type: "start", partial: {} as never });
+  tracker.onMessageEnd("x", {
+    timestamp: Date.now(),
+    stopReason: "toolUse",
+    usage: { output: 0 },
+    content: [],
+  });
+  const snap = tracker.getSnapshot(false);
+  assert.ok(snap.sessionAvgTtftSec !== undefined && snap.sessionAvgTtftSec >= 0);
+  tracker.dispose();
+});
+
 test("formatRate and formatTtftSeconds", () => {
   assert.equal(formatRate(0), undefined);
   assert.equal(formatRate(123.4), "123");
@@ -38,7 +53,7 @@ test("tracker records session average after assistant message ends", () => {
   const key = "msg-1";
   const requestStart = Date.now() - 5000;
 
-  tracker.onMessageStart(key, requestStart);
+  tracker.onAgentStart(requestStart);
   tracker.onMessageUpdate(key, { type: "start", partial: {} as never });
   tracker.onMessageUpdate(key, {
     type: "text_delta",
@@ -64,7 +79,7 @@ test("tracker records session average after assistant message ends", () => {
 test("live TPS only while streaming with recent samples", () => {
   const tracker = createStreamMetricsTracker();
   const key = "live-1";
-  tracker.onMessageStart(key, Date.now());
+  tracker.onAgentStart(Date.now());
   tracker.onMessageUpdate(key, {
     type: "text_delta",
     contentIndex: 0,
@@ -84,7 +99,7 @@ test("live TPS only while streaming with recent samples", () => {
 test("resetSession clears averages", () => {
   const tracker = createStreamMetricsTracker();
   const key = "r1";
-  tracker.onMessageStart(key, Date.now() - 1000);
+  tracker.onAgentStart(Date.now() - 1000);
   tracker.onMessageUpdate(key, { type: "start", partial: {} as never });
   tracker.onMessageEnd(key, {
     timestamp: Date.now(),

@@ -27,19 +27,24 @@ type SessionAverage = {
   totalDurationMs: number;
   totalTtftMs: number;
   messageCount: number;
+  ttftMessageCount: number;
 };
 
 export type StreamMetricsSnapshot = {
   liveTps?: number;
   sessionAvgTps?: number;
   sessionAvgTtftSec?: number;
+  /** Seconds from request start until first stream activity (while agent is running). */
+  liveTtftSec?: number;
 };
 
 type StreamMetricsState = {
   streamSamples: StreamSample[];
   messageTimingByKey: Map<string, MessageTiming>;
   sessionAverage: SessionAverage;
+  /** Stable id for the in-flight assistant reply (set at agent_start). */
   activeMessageKey: string | null;
+  activeRequestStartAt: number | null;
   pruneTimer: ReturnType<typeof setInterval> | null;
   version: number;
 };
@@ -64,7 +69,9 @@ export function formatTtftSeconds(value: number) {
 export function formatStreamMetricsLine(snapshot: StreamMetricsSnapshot, isStreaming: boolean): string {
   const live = isStreaming && snapshot.liveTps !== undefined ? formatRate(snapshot.liveTps) : undefined;
   const avg = snapshot.sessionAvgTps !== undefined ? formatRate(snapshot.sessionAvgTps) : undefined;
-  const ttft = snapshot.sessionAvgTtftSec !== undefined ? formatTtftSeconds(snapshot.sessionAvgTtftSec) : undefined;
+  const ttftLive = snapshot.liveTtftSec !== undefined ? formatTtftSeconds(snapshot.liveTtftSec) : undefined;
+  const ttftAvg = snapshot.sessionAvgTtftSec !== undefined ? formatTtftSeconds(snapshot.sessionAvgTtftSec) : undefined;
+  const ttft = isStreaming && ttftLive ? ttftLive : ttftAvg;
   return `TPS ${live ?? "-"} | AVG ${avg ?? "-"} | TTFT ${ttft ?? "-"}`;
 }
 
@@ -145,8 +152,17 @@ function computeSessionAvgTps(state: StreamMetricsState): number | undefined {
 
 function computeSessionAvgTtftSec(state: StreamMetricsState): number | undefined {
   const totals = state.sessionAverage;
-  if (totals.messageCount <= 0 || totals.totalTtftMs < 0) return undefined;
-  return totals.totalTtftMs / totals.messageCount / 1000;
+  if (totals.ttftMessageCount <= 0 || totals.totalTtftMs < 0) return undefined;
+  return totals.totalTtftMs / totals.ttftMessageCount / 1000;
+}
+
+function computeLiveTtftSec(state: StreamMetricsState, isStreaming: boolean, now = Date.now()): number | undefined {
+  if (!isStreaming || state.activeRequestStartAt === null || !state.activeMessageKey) return undefined;
+  const timing = state.messageTimingByKey.get(state.activeMessageKey);
+  if (!timing) return undefined;
+  const firstAt = timing.firstTokenAt ?? timing.firstResponseAt;
+  if (firstAt !== undefined) return Math.max(0, (firstAt - timing.requestStartAt) / 1000);
+  return Math.max(0, (now - timing.requestStartAt) / 1000);
 }
 
 export function getStreamMetricsSnapshot(
@@ -159,13 +175,14 @@ export function getStreamMetricsSnapshot(
     liveTps: computeLiveTps(state, isStreaming, now),
     sessionAvgTps: computeSessionAvgTps(state),
     sessionAvgTtftSec: computeSessionAvgTtftSec(state),
+    liveTtftSec: computeLiveTtftSec(state, isStreaming, now),
   };
 }
 
 export function createStreamMetricsTracker(): {
   state: StreamMetricsState;
   resetSession: () => void;
-  onAgentStart: () => void;
+  onAgentStart: (requestStartAt: number) => void;
   onMessageStart: (messageKey: string, requestStartAt: number) => void;
   onMessageUpdate: (messageKey: string, streamEvent: AssistantMessageEvent | undefined) => void;
   ensureMessageTiming: (messageKey: string, requestStartAt: number) => void;
@@ -183,8 +200,9 @@ export function createStreamMetricsTracker(): {
   const state: StreamMetricsState = {
     streamSamples: [],
     messageTimingByKey: new Map(),
-    sessionAverage: { totalTokens: 0, totalDurationMs: 0, totalTtftMs: 0, messageCount: 0 },
+    sessionAverage: { totalTokens: 0, totalDurationMs: 0, totalTtftMs: 0, messageCount: 0, ttftMessageCount: 0 },
     activeMessageKey: null,
+    activeRequestStartAt: null,
     pruneTimer: null,
     version: 0,
   };
@@ -196,37 +214,61 @@ export function createStreamMetricsTracker(): {
   const resetSession = () => {
     state.streamSamples = [];
     state.messageTimingByKey.clear();
-    state.sessionAverage = { totalTokens: 0, totalDurationMs: 0, totalTtftMs: 0, messageCount: 0 };
+    state.sessionAverage = { totalTokens: 0, totalDurationMs: 0, totalTtftMs: 0, messageCount: 0, ttftMessageCount: 0 };
     state.activeMessageKey = null;
+    state.activeRequestStartAt = null;
     state.version++;
   };
 
-  const onAgentStart = () => {
+  const onAgentStart = (requestStartAt: number) => {
     clearLiveSamples(state);
+    const turnKey = `turn:${requestStartAt}`;
+    state.activeMessageKey = turnKey;
+    state.activeRequestStartAt = requestStartAt;
+    state.messageTimingByKey.set(turnKey, { requestStartAt });
+    state.version++;
   };
 
+  const resolveMessageKey = (messageKey: string) => state.activeMessageKey ?? messageKey;
+
   const onMessageStart = (messageKey: string, requestStartAt: number) => {
-    state.activeMessageKey = messageKey;
-    if (!state.messageTimingByKey.has(messageKey)) {
-      state.messageTimingByKey.set(messageKey, { requestStartAt });
+    if (!state.activeMessageKey) {
+      onAgentStart(requestStartAt);
+    }
+    const key = state.activeMessageKey!;
+    const timing = state.messageTimingByKey.get(key);
+    if (timing && timing.requestStartAt > requestStartAt) {
+      timing.requestStartAt = requestStartAt;
+      state.messageTimingByKey.set(key, timing);
+      state.activeRequestStartAt = requestStartAt;
       state.version++;
     }
   };
 
   const ensureMessageTiming = (messageKey: string, requestStartAt: number) => {
-    if (!state.messageTimingByKey.has(messageKey)) {
-      onMessageStart(messageKey, requestStartAt);
+    if (!state.activeMessageKey) {
+      onAgentStart(requestStartAt);
+      return;
+    }
+    const key = state.activeMessageKey;
+    const timing = state.messageTimingByKey.get(key);
+    if (timing && timing.requestStartAt > requestStartAt) {
+      timing.requestStartAt = requestStartAt;
+      state.messageTimingByKey.set(key, timing);
+      state.activeRequestStartAt = requestStartAt;
+      state.version++;
     }
   };
 
   const onMessageUpdate = (messageKey: string, streamEvent: AssistantMessageEvent | undefined) => {
+    const key = resolveMessageKey(messageKey);
     if (!streamEvent) return;
 
     if (streamEvent.type === "start") {
-      const timing = state.messageTimingByKey.get(messageKey);
+      const timing = state.messageTimingByKey.get(key);
       if (timing && timing.firstResponseAt === undefined) {
         timing.firstResponseAt = Date.now();
-        state.messageTimingByKey.set(messageKey, timing);
+        state.messageTimingByKey.set(key, timing);
         state.version++;
       }
       return;
@@ -235,7 +277,7 @@ export function createStreamMetricsTracker(): {
     if (streamEvent.type === "text_delta" || streamEvent.type === "thinking_delta") {
       const delta = streamEvent.delta;
       if (typeof delta !== "string" || delta.length === 0) return;
-      appendSample(state, messageKey, {
+      appendSample(state, key, {
         at: Date.now(),
         tokens: estimateStreamTokens(delta),
       });
@@ -244,13 +286,13 @@ export function createStreamMetricsTracker(): {
 
     if (streamEvent.type === "toolcall_start") {
       clearLiveSamples(state);
-      const timing = state.messageTimingByKey.get(messageKey);
+      const timing = state.messageTimingByKey.get(key);
       if (timing) {
         timing.lastToolCallAt = Date.now();
         if (timing.firstResponseAt === undefined) {
           timing.firstResponseAt = Date.now();
         }
-        state.messageTimingByKey.set(messageKey, timing);
+        state.messageTimingByKey.set(key, timing);
         state.version++;
       }
     }
@@ -284,28 +326,41 @@ export function createStreamMetricsTracker(): {
       content: unknown;
     },
   ) => {
-    const timing = state.messageTimingByKey.get(messageKey);
-    if (timing && typeof timing.firstResponseAt === "number") {
+    const key = resolveMessageKey(messageKey);
+    const timing = state.messageTimingByKey.get(key);
+    const okStop = message.stopReason !== "error" && message.stopReason !== "aborted";
+
+    if (timing && okStop) {
+      const firstResponseAt = timing.firstResponseAt
+        ?? timing.firstTokenAt
+        ?? (timing.lastToolCallAt !== undefined ? timing.lastToolCallAt : undefined)
+        ?? (typeof message.timestamp === "number" && message.timestamp > timing.requestStartAt
+          ? message.timestamp
+          : Date.now());
+
       const totalTokens = countOutputTokens(message);
       const endAt = message.stopReason === "toolUse" && timing.lastToolCallAt
         ? timing.lastToolCallAt
-        : message.timestamp;
-      const durationMs = Math.max(endAt - timing.firstResponseAt, 1);
-      const ttftMs = Math.max(timing.firstResponseAt - timing.requestStartAt, 0);
+        : (typeof message.timestamp === "number" ? message.timestamp : Date.now());
+      const durationMs = Math.max(endAt - firstResponseAt, 1);
+      const ttftMs = Math.max(firstResponseAt - timing.requestStartAt, 0);
 
-      if (totalTokens > 0 && message.stopReason !== "error" && message.stopReason !== "aborted") {
-        state.sessionAverage = {
-          totalTokens: state.sessionAverage.totalTokens + totalTokens,
-          totalDurationMs: state.sessionAverage.totalDurationMs + durationMs,
-          totalTtftMs: state.sessionAverage.totalTtftMs + ttftMs,
-          messageCount: state.sessionAverage.messageCount + 1,
-        };
+      const next = { ...state.sessionAverage };
+      next.totalTtftMs += ttftMs;
+      next.ttftMessageCount += 1;
+
+      if (totalTokens > 0) {
+        next.totalTokens += totalTokens;
+        next.totalDurationMs += durationMs;
+        next.messageCount += 1;
       }
+      state.sessionAverage = next;
     }
 
-    state.messageTimingByKey.delete(messageKey);
-    if (state.activeMessageKey === messageKey) {
+    state.messageTimingByKey.delete(key);
+    if (state.activeMessageKey === key) {
       state.activeMessageKey = null;
+      state.activeRequestStartAt = null;
     }
     pruneSamples(state, message.timestamp);
     clearLiveSamples(state);
