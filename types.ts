@@ -46,6 +46,9 @@ export type BuiltinStatusLineSegmentId =
   | "cache_read"
   | "cache_write"
   | "thinking"
+  | "tps_live"
+  | "tps_avg"
+  | "ttft_avg"
   | "extension_statuses";
 
 // Segment identifiers (built-in + dynamically registered custom items)
@@ -153,6 +156,12 @@ export interface SegmentContext {
   
   // Computed
   usageStats: UsageStats;
+  streamMetrics: {
+    liveTps?: number;
+    sessionAvgTps?: number;
+    sessionAvgTtftSec?: number;
+  };
+  isStreaming: boolean;
   contextPercent: number;
   contextWindow: number;
   autoCompactEnabled: boolean;

@@ -34,6 +34,7 @@ import { WelcomeComponent, WelcomeHeader, discoverLoadedCounts, getRecentSession
 import { createWelcomeDismissScheduler } from "./welcome-dismiss.ts";
 import { createRenderScheduler } from "./render-scheduler.ts";
 import { readCoreContextUsage } from "./context-usage.ts";
+import { assistantMessageStreamKey, createStreamMetricsTracker } from "./stream-metrics.ts";
 import { renderFixedEditorCluster } from "./fixed-editor/cluster.ts";
 import { emergencyTerminalModeReset, TerminalSplitCompositor } from "./fixed-editor/terminal-split.ts";
 import { getDefaultColors } from "./theme.ts";
@@ -1018,6 +1019,28 @@ export default function powerlineFooter(pi: ExtensionAPI) {
   let bashTranscript = new BashTranscriptStore(bashModeSettings);
   let bashCompletionEngine = new BashCompletionEngine();
   let shellSession: ManagedShellSession | null = null;
+  const streamMetrics = createStreamMetricsTracker();
+  let pendingAssistantRequestStartAt: number | null = null;
+  let streamingMetricsRefreshTimer: ReturnType<typeof setInterval> | null = null;
+
+  const stopStreamingMetricsRefresh = () => {
+    if (streamingMetricsRefreshTimer) {
+      clearInterval(streamingMetricsRefreshTimer);
+      streamingMetricsRefreshTimer = null;
+    }
+  };
+
+  const startStreamingMetricsRefresh = () => {
+    stopStreamingMetricsRefresh();
+    streamingMetricsRefreshTimer = setInterval(() => {
+      if (!isStreaming) {
+        stopStreamingMetricsRefresh();
+        return;
+      }
+      layoutDirty = true;
+      statusRenderScheduler.schedule(0);
+    }, 1000);
+  };
   
   // Cache for the top and secondary powerline widgets.
   let lastLayoutWidth = 0;
@@ -1257,6 +1280,8 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     bashModeActive = false;
     bashTranscript = new BashTranscriptStore(bashModeSettings);
     bashCompletionEngine = new BashCompletionEngine();
+    streamMetrics.resetSession();
+    pendingAssistantRequestStartAt = null;
 
     getThinkingLevelFn = typeof ctx.getThinkingLevel === "function"
       ? () => ctx.getThinkingLevel()
@@ -1299,6 +1324,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     welcomeOverlayShouldDismiss = false;
     welcomeDismissScheduler.cancel();
     statusRenderScheduler.cancel();
+    stopStreamingMetricsRefresh();
     restoreFooterStatusRepaintHook?.();
     restoreFooterStatusRepaintHook = null;
     teardownFixedEditorCompositor(isTerminalExit ? { resetExtendedKeyboardModes: true } : undefined);
@@ -1380,6 +1406,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
   // Generate themed working message before agent starts (has access to user's prompt)
   pi.on("before_agent_start", async (event, ctx) => {
     lastUserPrompt = event.prompt;
+    pendingAssistantRequestStartAt = Date.now();
     if (ctx.hasUI) {
       onVibeBeforeAgentStart(event.prompt, ctx.ui.setWorkingMessage);
     }
@@ -1390,26 +1417,49 @@ export default function powerlineFooter(pi: ExtensionAPI) {
   pi.on("agent_start", async (_event, ctx) => {
     isStreaming = true;
     liveAssistantUsage = null;
+    streamMetrics.onAgentStart();
+    startStreamingMetricsRefresh();
     onVibeAgentStart();
     dismissWelcome(ctx);
     currentCtx = ctx;
+    requestStatusRender();
+  });
+
+  pi.on("message_start", async (event, ctx) => {
+    currentCtx = ctx;
+    if (event.message.role !== "assistant") return;
+    const requestStartAt = pendingAssistantRequestStartAt ?? Date.now();
+    pendingAssistantRequestStartAt = null;
+    streamMetrics.onMessageStart(assistantMessageStreamKey(event.message), requestStartAt);
+    layoutDirty = true;
+    requestStatusRender();
   });
 
   pi.on("message_update", async (event, ctx) => {
-    if (isSessionAssistantMessage(event.message)
-      && event.message.stopReason !== "error"
-      && event.message.stopReason !== "aborted"
-      && getUsageTokenTotal(event.message.usage) > 0) {
-      liveAssistantUsage = event.message.usage;
-      currentCtx = ctx;
-      layoutDirty = true;
-      statusRenderScheduler.schedule(CONTEXT_STATUS_RENDER_MS);
+    currentCtx = ctx;
+    if (isSessionAssistantMessage(event.message)) {
+      const messageKey = assistantMessageStreamKey(event.message);
+      const before = streamMetrics.bumpVersion();
+      streamMetrics.onMessageUpdate(messageKey, event.assistantMessageEvent);
+      const metricsChanged = streamMetrics.bumpVersion() !== before;
+
+      if (event.message.stopReason !== "error"
+        && event.message.stopReason !== "aborted"
+        && getUsageTokenTotal(event.message.usage) > 0) {
+        liveAssistantUsage = event.message.usage;
+        layoutDirty = true;
+        statusRenderScheduler.schedule(CONTEXT_STATUS_RENDER_MS);
+      } else if (metricsChanged) {
+        layoutDirty = true;
+        statusRenderScheduler.schedule(STATUS_RENDER_DEBOUNCE_MS);
+      }
     }
   });
 
   pi.on("message_end", async (event, ctx) => {
     currentCtx = ctx;
     if (isSessionAssistantMessage(event.message)) {
+      streamMetrics.onMessageEnd(assistantMessageStreamKey(event.message), event.message);
       if (event.message.stopReason === "error" || event.message.stopReason === "aborted") {
         liveAssistantUsage = null;
       } else if (getUsageTokenTotal(event.message.usage) > 0) {
@@ -1417,6 +1467,13 @@ export default function powerlineFooter(pi: ExtensionAPI) {
       }
     }
     requestImmediateStatusRender({ deferDuringTyping: false });
+  });
+
+  pi.on("tool_execution_start", async (_event, ctx) => {
+    currentCtx = ctx;
+    streamMetrics.onToolExecutionStart();
+    layoutDirty = true;
+    requestStatusRender();
   });
 
   pi.on("turn_end", async (_event, ctx) => {
@@ -1730,6 +1787,7 @@ export default function powerlineFooter(pi: ExtensionAPI) {
 
   pi.on("agent_end", async (_event, ctx) => {
     isStreaming = false;
+    stopStreamingMetricsRefresh();
     liveAssistantUsage = null;
     currentCtx = ctx;
     if (ctx.hasUI) {
@@ -2154,6 +2212,8 @@ export default function powerlineFooter(pi: ExtensionAPI) {
       sessionId: ctx.sessionManager?.getSessionId?.(),
       cwd: ctx.cwd,
       usageStats: { input, output, cacheRead, cacheWrite, cost },
+      streamMetrics: streamMetrics.getSnapshot(isStreaming),
+      isStreaming,
       contextPercent,
       contextWindow,
       autoCompactEnabled: ctx.settingsManager?.getCompactionSettings?.()?.enabled ?? true,

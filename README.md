@@ -334,7 +334,9 @@ Use `"off"` to disable extension-owned git polling entirely and only show the br
 
 ## Segments
 
-`model` · `thinking` · `shell_mode` · `path` · `git` · `subagents` · `token_in` · `token_out` · `token_total` · `cost` · `context_pct` · `context_total` · `time_spent` · `time` · `session` · `hostname` · `cache_read` · `cache_write`
+`model` · `thinking` · `shell_mode` · `path` · `git` · `subagents` · `token_in` · `token_out` · `token_total` · `cost` · `context_pct` · `context_total` · `time_spent` · `time` · `session` · `hostname` · `cache_read` · `cache_write` · `tps_live` · `tps_avg` · `ttft_avg`
+
+**Stream metrics** (`tps_live`, `tps_avg`, `ttft_avg`): live tokens/sec while the agent streams, session-average output TPS, and average time-to-first-token per completed assistant reply. Logic adapted from [oc-tps](https://github.com/Tarquinen/oc-tps). Included in the `default`, `full`, and `nerd` presets.
 
 ## Separators
 

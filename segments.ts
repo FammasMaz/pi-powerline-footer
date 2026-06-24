@@ -5,6 +5,7 @@ import type { BuiltinStatusLineSegmentId, RenderedSegment, SegmentContext, Seman
 import { normalizeCompactExtensionStatus, normalizeExtensionStatusValue } from "./powerline-config.ts";
 import { fg, rainbow, applyColor } from "./theme.ts";
 import { getIcons, SEP_DOT, getThinkingText } from "./icons.ts";
+import { formatRate, formatTtftSeconds } from "./stream-metrics.ts";
 
 function color(ctx: SegmentContext, semantic: SemanticColor, text: string): string {
   return fg(ctx.theme, semantic, text, ctx.colors);
@@ -397,6 +398,40 @@ const cacheWriteSegment: StatusLineSegment = {
   },
 };
 
+const tpsLiveSegment: StatusLineSegment = {
+  id: "tps_live",
+  render(ctx) {
+    if (!ctx.isStreaming) return { content: "", visible: false };
+    const rate = ctx.streamMetrics.liveTps;
+    const formatted = rate !== undefined ? formatRate(rate) : undefined;
+    if (!formatted) return { content: "", visible: false };
+    const content = `TPS ${formatted}`;
+    return { content: color(ctx, "tokens", content), visible: true };
+  },
+};
+
+const tpsAvgSegment: StatusLineSegment = {
+  id: "tps_avg",
+  render(ctx) {
+    const rate = ctx.streamMetrics.sessionAvgTps;
+    const formatted = rate !== undefined ? formatRate(rate) : undefined;
+    if (!formatted) return { content: "", visible: false };
+    const content = `AVG ${formatted}`;
+    return { content: color(ctx, "tokens", content), visible: true };
+  },
+};
+
+const ttftAvgSegment: StatusLineSegment = {
+  id: "ttft_avg",
+  render(ctx) {
+    const sec = ctx.streamMetrics.sessionAvgTtftSec;
+    const formatted = sec !== undefined ? formatTtftSeconds(sec) : undefined;
+    if (!formatted) return { content: "", visible: false };
+    const content = `TTFT ${formatted}`;
+    return { content: color(ctx, "tokens", content), visible: true };
+  },
+};
+
 const extensionStatusesSegment: StatusLineSegment = {
   id: "extension_statuses",
   render(ctx) {
@@ -447,6 +482,9 @@ export const SEGMENTS: Record<BuiltinStatusLineSegmentId, StatusLineSegment> = {
   hostname: hostnameSegment,
   cache_read: cacheReadSegment,
   cache_write: cacheWriteSegment,
+  tps_live: tpsLiveSegment,
+  tps_avg: tpsAvgSegment,
+  ttft_avg: ttftAvgSegment,
   extension_statuses: extensionStatusesSegment,
 };
 
