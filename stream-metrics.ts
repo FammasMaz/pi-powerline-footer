@@ -60,6 +60,14 @@ export function formatTtftSeconds(value: number) {
   return `${value.toFixed(1)}s`;
 }
 
+/** Single-line display matching oc-tps: TPS live | AVG session | TTFT session */
+export function formatStreamMetricsLine(snapshot: StreamMetricsSnapshot, isStreaming: boolean): string {
+  const live = isStreaming && snapshot.liveTps !== undefined ? formatRate(snapshot.liveTps) : undefined;
+  const avg = snapshot.sessionAvgTps !== undefined ? formatRate(snapshot.sessionAvgTps) : undefined;
+  const ttft = snapshot.sessionAvgTtftSec !== undefined ? formatTtftSeconds(snapshot.sessionAvgTtftSec) : undefined;
+  return `TPS ${live ?? "-"} | AVG ${avg ?? "-"} | TTFT ${ttft ?? "-"}`;
+}
+
 export function activeDurationMs(samples: StreamSample[], tailAt?: number) {
   if (samples.length === 0) return 0;
   if (samples.length === 1) {
@@ -160,6 +168,7 @@ export function createStreamMetricsTracker(): {
   onAgentStart: () => void;
   onMessageStart: (messageKey: string, requestStartAt: number) => void;
   onMessageUpdate: (messageKey: string, streamEvent: AssistantMessageEvent | undefined) => void;
+  ensureMessageTiming: (messageKey: string, requestStartAt: number) => void;
   onMessageEnd: (messageKey: string, message: {
     timestamp: number;
     stopReason: string;
@@ -198,8 +207,16 @@ export function createStreamMetricsTracker(): {
 
   const onMessageStart = (messageKey: string, requestStartAt: number) => {
     state.activeMessageKey = messageKey;
-    state.messageTimingByKey.set(messageKey, { requestStartAt });
-    state.version++;
+    if (!state.messageTimingByKey.has(messageKey)) {
+      state.messageTimingByKey.set(messageKey, { requestStartAt });
+      state.version++;
+    }
+  };
+
+  const ensureMessageTiming = (messageKey: string, requestStartAt: number) => {
+    if (!state.messageTimingByKey.has(messageKey)) {
+      onMessageStart(messageKey, requestStartAt);
+    }
   };
 
   const onMessageUpdate = (messageKey: string, streamEvent: AssistantMessageEvent | undefined) => {
@@ -312,6 +329,7 @@ export function createStreamMetricsTracker(): {
     onAgentStart,
     onMessageStart,
     onMessageUpdate,
+    ensureMessageTiming,
     onMessageEnd,
     onToolExecutionStart,
     dispose,

@@ -1404,6 +1404,11 @@ export default function powerlineFooter(pi: ExtensionAPI) {
   });
 
   // Generate themed working message before agent starts (has access to user's prompt)
+  pi.on("turn_start", async (_event, ctx) => {
+    currentCtx = ctx;
+    pendingAssistantRequestStartAt = Date.now();
+  });
+
   pi.on("before_agent_start", async (event, ctx) => {
     lastUserPrompt = event.prompt;
     pendingAssistantRequestStartAt = Date.now();
@@ -1439,6 +1444,10 @@ export default function powerlineFooter(pi: ExtensionAPI) {
     currentCtx = ctx;
     if (isSessionAssistantMessage(event.message)) {
       const messageKey = assistantMessageStreamKey(event.message);
+      streamMetrics.ensureMessageTiming(
+        messageKey,
+        pendingAssistantRequestStartAt ?? Date.now(),
+      );
       const before = streamMetrics.bumpVersion();
       streamMetrics.onMessageUpdate(messageKey, event.assistantMessageEvent);
       const metricsChanged = streamMetrics.bumpVersion() !== before;
@@ -1459,7 +1468,12 @@ export default function powerlineFooter(pi: ExtensionAPI) {
   pi.on("message_end", async (event, ctx) => {
     currentCtx = ctx;
     if (isSessionAssistantMessage(event.message)) {
-      streamMetrics.onMessageEnd(assistantMessageStreamKey(event.message), event.message);
+      const messageKey = assistantMessageStreamKey(event.message);
+      streamMetrics.ensureMessageTiming(
+        messageKey,
+        pendingAssistantRequestStartAt ?? event.message.timestamp,
+      );
+      streamMetrics.onMessageEnd(messageKey, event.message);
       if (event.message.stopReason === "error" || event.message.stopReason === "aborted") {
         liveAssistantUsage = null;
       } else if (getUsageTokenTotal(event.message.usage) > 0) {

@@ -49,6 +49,7 @@ export type BuiltinStatusLineSegmentId =
   | "tps_live"
   | "tps_avg"
   | "ttft_avg"
+  | "stream_metrics"
   | "extension_statuses";
 
 // Segment identifiers (built-in + dynamically registered custom items)

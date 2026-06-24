@@ -5,6 +5,7 @@ import {
   estimateStreamTokens,
   formatRate,
   formatTtftSeconds,
+  formatStreamMetricsLine,
   createStreamMetricsTracker,
 } from "../stream-metrics.ts";
 
@@ -12,6 +13,10 @@ test("estimateStreamTokens uses byte length heuristic", () => {
   assert.equal(estimateStreamTokens(""), 1);
   assert.equal(estimateStreamTokens("hello"), 1);
   assert.ok(estimateStreamTokens("a".repeat(20)) >= 4);
+});
+
+test("formatStreamMetricsLine shows placeholders when empty", () => {
+  assert.equal(formatStreamMetricsLine({}, false), "TPS - | AVG - | TTFT -");
 });
 
 test("formatRate and formatTtftSeconds", () => {

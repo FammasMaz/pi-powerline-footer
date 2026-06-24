@@ -5,7 +5,7 @@ import type { BuiltinStatusLineSegmentId, RenderedSegment, SegmentContext, Seman
 import { normalizeCompactExtensionStatus, normalizeExtensionStatusValue } from "./powerline-config.ts";
 import { fg, rainbow, applyColor } from "./theme.ts";
 import { getIcons, SEP_DOT, getThinkingText } from "./icons.ts";
-import { formatRate, formatTtftSeconds } from "./stream-metrics.ts";
+import { formatRate, formatStreamMetricsLine, formatTtftSeconds } from "./stream-metrics.ts";
 
 function color(ctx: SegmentContext, semantic: SemanticColor, text: string): string {
   return fg(ctx.theme, semantic, text, ctx.colors);
@@ -432,6 +432,14 @@ const ttftAvgSegment: StatusLineSegment = {
   },
 };
 
+const streamMetricsSegment: StatusLineSegment = {
+  id: "stream_metrics",
+  render(ctx) {
+    const line = formatStreamMetricsLine(ctx.streamMetrics, ctx.isStreaming);
+    return { content: color(ctx, "tokens", line), visible: true };
+  },
+};
+
 const extensionStatusesSegment: StatusLineSegment = {
   id: "extension_statuses",
   render(ctx) {
@@ -485,6 +493,7 @@ export const SEGMENTS: Record<BuiltinStatusLineSegmentId, StatusLineSegment> = {
   tps_live: tpsLiveSegment,
   tps_avg: tpsAvgSegment,
   ttft_avg: ttftAvgSegment,
+  stream_metrics: streamMetricsSegment,
   extension_statuses: extensionStatusesSegment,
 };
 

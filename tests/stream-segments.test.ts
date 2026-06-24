@@ -43,6 +43,12 @@ test("tps_live shows formatted rate while streaming", () => {
   assert.ok(r.content.replace(/\x1b\[[0-9;]*m/g, "").includes("TPS 12.3"));
 });
 
+test("stream_metrics always visible with placeholders", () => {
+  const r = renderSegment("stream_metrics", baseCtx({}));
+  assert.equal(r.visible, true);
+  assert.ok(r.content.includes("TPS -"));
+});
+
 test("ttft_avg shows session average", () => {
   const r = renderSegment("ttft_avg", baseCtx({ streamMetrics: { sessionAvgTtftSec: 1.5 } }));
   assert.equal(r.visible, true);
