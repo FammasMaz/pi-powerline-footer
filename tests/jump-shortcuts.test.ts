@@ -89,8 +89,10 @@ test("super shortcut matching rejects plain keys and unsupported command aliases
   assert.equal(matchesConfiguredShortcut("\x1b[A", "super+up"), false);
   assert.equal(matchesConfiguredShortcut("\x1b[1;9A", "super+up"), true);
   assert.equal(matchesConfiguredShortcut("\x1b[1;10A", "super+shift+up"), true);
+  assert.equal(matchesConfiguredShortcut("\x1b[122;9u", "super+z"), false);
   assert.equal(isSupportedSuperShortcut("super+c"), false);
   assert.equal(isSupportedSuperShortcut("super+shift+x"), false);
+  assert.equal(isSupportedSuperShortcut("super+z"), false);
   assert.equal(isSupportedSuperShortcut("super+up"), true);
   assert.equal(shortcutConflictKey("super+home"), "super+up");
   assert.equal(shortcutConflictKey("super+end"), "super+down");
@@ -208,4 +210,10 @@ test("powerline shortcuts have terminal-input fallback routing", () => {
   assert.match(source, /matchesConfiguredShortcut\(data, resolvedShortcuts\.cutEditor\)/);
   assert.match(source, /matchesConfiguredShortcut\(data, bashModeSettings\.toggleShortcut\)/);
   assert.match(source, /runPowerlineShortcut\(ctx, powerlineShortcutAction\)/);
+});
+
+test("powerline editor preserves a previous editor autocomplete provider", () => {
+  assert.match(source, /const previousEditorFactory = typeof ctx\.ui\.getEditorComponent === "function" \? ctx\.ui\.getEditorComponent\(\) : undefined/);
+  assert.match(source, /const previousEditor = previousEditorFactory\?\.\(tui, editorTheme, keybindings\)/);
+  assert.match(source, /return getEditorAutocompleteProvider\(editor\) \?\? getEditorAutocompleteProvider\(previousEditor\)/);
 });
