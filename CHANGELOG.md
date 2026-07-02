@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+- **Stream metrics averages** — The TPS/TTFT average is now a **rolling median of the last 10 completed messages** (shown in brackets, e.g. `TPS 42.3 (35.1)`) instead of an all-time mean, so it tracks current conditions rather than going stale over a long session. `tps_live` now shows `TPS <live> (<avg>)` while streaming and `TPS <avg>` when idle; `ttft_avg` does the same for time-to-first-token. The separate `tps_avg` cell was removed from the `full` / `nerd` presets (the avg now lives in brackets inside `tps_live`); the segment is kept for backwards-compatible custom configs.
+
+### Fixed
+- **Tool execution excluded from TPS** — Hardened and documented that tool results are never counted as tokens and tool execution time is never folded into the generation duration (for `toolUse` messages the window ends at the last tool-call start). Added a regression test.
+
 ## [0.6.1] - 2026-06-08
 
 ### Fixed

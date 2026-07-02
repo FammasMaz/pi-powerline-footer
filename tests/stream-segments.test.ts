@@ -43,6 +43,18 @@ test("tps_live shows formatted rate while streaming", () => {
   assert.ok(r.content.replace(/\x1b\[[0-9;]*m/g, "").includes("TPS 12.3"));
 });
 
+test("tps_live shows avg in brackets alongside live", () => {
+  const r = renderSegment("tps_live", baseCtx({ isStreaming: true, streamMetrics: { liveTps: 42.3, sessionAvgTps: 35.1 } }));
+  assert.equal(r.visible, true);
+  assert.ok(r.content.replace(/\x1b\[[0-9;]*m/g, "").includes("TPS 42.3 (35.1)"));
+});
+
+test("tps_live shows avg alone when idle", () => {
+  const r = renderSegment("tps_live", baseCtx({ isStreaming: false, streamMetrics: { sessionAvgTps: 35.1 } }));
+  assert.equal(r.visible, true);
+  assert.ok(r.content.replace(/\x1b\[[0-9;]*m/g, "").includes("TPS 35.1"));
+});
+
 test("stream_metrics always visible with placeholders", () => {
   const r = renderSegment("stream_metrics", baseCtx({}));
   assert.equal(r.visible, true);
@@ -53,4 +65,10 @@ test("ttft_avg shows session average", () => {
   const r = renderSegment("ttft_avg", baseCtx({ streamMetrics: { sessionAvgTtftSec: 1.5 } }));
   assert.equal(r.visible, true);
   assert.ok(r.content.replace(/\x1b\[[0-9;]*m/g, "").includes("TTFT 1.5s"));
+});
+
+test("ttft_avg shows live with avg in brackets while streaming", () => {
+  const r = renderSegment("ttft_avg", baseCtx({ isStreaming: true, streamMetrics: { liveTtftSec: 1.2, sessionAvgTtftSec: 1.5 } }));
+  assert.equal(r.visible, true);
+  assert.ok(r.content.replace(/\x1b\[[0-9;]*m/g, "").includes("TTFT 1.2s (1.5s)"));
 });

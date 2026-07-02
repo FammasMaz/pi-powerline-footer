@@ -401,11 +401,15 @@ const cacheWriteSegment: StatusLineSegment = {
 const tpsLiveSegment: StatusLineSegment = {
   id: "tps_live",
   render(ctx) {
-    if (!ctx.isStreaming) return { content: "", visible: false };
-    const rate = ctx.streamMetrics.liveTps;
-    const formatted = rate !== undefined ? formatRate(rate) : undefined;
-    if (!formatted) return { content: "", visible: false };
-    const content = `TPS ${formatted}`;
+    const live = ctx.isStreaming && ctx.streamMetrics.liveTps !== undefined
+      ? formatRate(ctx.streamMetrics.liveTps)
+      : undefined;
+    const avg = ctx.streamMetrics.sessionAvgTps !== undefined
+      ? formatRate(ctx.streamMetrics.sessionAvgTps)
+      : undefined;
+    if (!live && !avg) return { content: "", visible: false };
+    // Avg goes in brackets next to the live value; when idle the avg stands alone.
+    const content = live && avg ? `TPS ${live} (${avg})` : `TPS ${live ?? avg}`;
     return { content: color(ctx, "tokens", content), visible: true };
   },
 };
@@ -424,10 +428,15 @@ const tpsAvgSegment: StatusLineSegment = {
 const ttftAvgSegment: StatusLineSegment = {
   id: "ttft_avg",
   render(ctx) {
-    const sec = ctx.streamMetrics.sessionAvgTtftSec;
-    const formatted = sec !== undefined ? formatTtftSeconds(sec) : undefined;
-    if (!formatted) return { content: "", visible: false };
-    const content = `TTFT ${formatted}`;
+    const live = ctx.isStreaming && ctx.streamMetrics.liveTtftSec !== undefined
+      ? formatTtftSeconds(ctx.streamMetrics.liveTtftSec)
+      : undefined;
+    const avg = ctx.streamMetrics.sessionAvgTtftSec !== undefined
+      ? formatTtftSeconds(ctx.streamMetrics.sessionAvgTtftSec)
+      : undefined;
+    if (!live && !avg) return { content: "", visible: false };
+    // Avg goes in brackets next to the live TTFT; when idle the avg stands alone.
+    const content = live && avg ? `TTFT ${live} (${avg})` : `TTFT ${live ?? avg}`;
     return { content: color(ctx, "tokens", content), visible: true };
   },
 };

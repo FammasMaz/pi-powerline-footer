@@ -59,7 +59,7 @@ export const PRESETS: Record<StatusLinePreset, PresetDef> = {
 
   full: {
     leftSegments: ["hostname", "model", "thinking", "shell_mode", "path", "git", "subagents"],
-    rightSegments: ["token_in", "token_out", "cache_read", "cost", "context_pct", "tps_live", "tps_avg", "ttft_avg", "time_spent", "time", "extension_statuses"],
+    rightSegments: ["token_in", "token_out", "cache_read", "cost", "context_pct", "tps_live", "ttft_avg", "time_spent", "time", "extension_statuses"],
     separator: "powerline",
     colors: DEFAULT_COLORS,
     segmentOptions: {
@@ -72,7 +72,7 @@ export const PRESETS: Record<StatusLinePreset, PresetDef> = {
 
   nerd: {
     leftSegments: ["hostname", "model", "thinking", "shell_mode", "path", "git", "session", "subagents"],
-    rightSegments: ["token_in", "token_out", "cache_read", "cache_write", "cost", "context_pct", "context_total", "tps_live", "tps_avg", "ttft_avg", "time_spent", "time", "extension_statuses"],
+    rightSegments: ["token_in", "token_out", "cache_read", "cache_write", "cost", "context_pct", "context_total", "tps_live", "ttft_avg", "time_spent", "time", "extension_statuses"],
     separator: "powerline",
     colors: NERD_COLORS,
     segmentOptions: {

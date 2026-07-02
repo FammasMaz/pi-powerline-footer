@@ -161,6 +161,7 @@ export interface SegmentContext {
     liveTps?: number;
     sessionAvgTps?: number;
     sessionAvgTtftSec?: number;
+    liveTtftSec?: number;
   };
   isStreaming: boolean;
   contextPercent: number;

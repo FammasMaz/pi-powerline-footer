@@ -13,6 +13,8 @@ export type StreamSample = {
 const STREAM_WINDOW_MS = 5_000;
 const LIVE_STALE_MS = 1_500;
 const SINGLE_SAMPLE_MS = 1_000;
+/** Number of recent completed messages used for the rolling-median averages. */
+const ROLLING_WINDOW = 10;
 
 type MessageTiming = {
   requestStartAt: number;
@@ -23,11 +25,10 @@ type MessageTiming = {
 };
 
 type SessionAverage = {
-  totalTokens: number;
-  totalDurationMs: number;
-  totalTtftMs: number;
-  messageCount: number;
-  ttftMessageCount: number;
+  /** Per-message TPS (tokens/sec) for the most recent completed messages. */
+  recentTps: number[];
+  /** Per-message TTFT (seconds) for the most recent completed messages. */
+  recentTtftSec: number[];
 };
 
 export type StreamMetricsSnapshot = {
@@ -65,14 +66,21 @@ export function formatTtftSeconds(value: number) {
   return `${value.toFixed(1)}s`;
 }
 
-/** Single-line display matching oc-tps: TPS live | AVG session | TTFT session */
+/** Format a labelled metric as `LABEL primary (avg)`, falling back gracefully. */
+function formatWithAvg(label: string, primary: string | undefined, avg: string | undefined): string {
+  if (primary && avg) return `${label} ${primary} (${avg})`;
+  if (primary) return `${label} ${primary}`;
+  if (avg) return `${label} ${avg}`;
+  return `${label} -`;
+}
+
+/** Single-line display: `TPS live (avg) | TTFT live (avg)` — avg shown in brackets. */
 export function formatStreamMetricsLine(snapshot: StreamMetricsSnapshot, isStreaming: boolean): string {
   const live = isStreaming && snapshot.liveTps !== undefined ? formatRate(snapshot.liveTps) : undefined;
   const avg = snapshot.sessionAvgTps !== undefined ? formatRate(snapshot.sessionAvgTps) : undefined;
-  const ttftLive = snapshot.liveTtftSec !== undefined ? formatTtftSeconds(snapshot.liveTtftSec) : undefined;
+  const ttftLive = isStreaming && snapshot.liveTtftSec !== undefined ? formatTtftSeconds(snapshot.liveTtftSec) : undefined;
   const ttftAvg = snapshot.sessionAvgTtftSec !== undefined ? formatTtftSeconds(snapshot.sessionAvgTtftSec) : undefined;
-  const ttft = isStreaming && ttftLive ? ttftLive : ttftAvg;
-  return `TPS ${live ?? "-"} | AVG ${avg ?? "-"} | TTFT ${ttft ?? "-"}`;
+  return `${formatWithAvg("TPS", live, avg)} | ${formatWithAvg("TTFT", ttftLive, ttftAvg)}`;
 }
 
 export function activeDurationMs(samples: StreamSample[], tailAt?: number) {
@@ -144,16 +152,20 @@ function computeLiveTps(state: StreamMetricsState, isStreaming: boolean, now = D
   return total / durationSeconds;
 }
 
+/** Median of a list of numbers; undefined when empty. Robust to outliers. */
+function median(values: number[]): number | undefined {
+  if (values.length === 0) return undefined;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
 function computeSessionAvgTps(state: StreamMetricsState): number | undefined {
-  const totals = state.sessionAverage;
-  if (totals.totalTokens <= 0 || totals.totalDurationMs <= 0) return undefined;
-  return totals.totalTokens / (totals.totalDurationMs / 1000);
+  return median(state.sessionAverage.recentTps);
 }
 
 function computeSessionAvgTtftSec(state: StreamMetricsState): number | undefined {
-  const totals = state.sessionAverage;
-  if (totals.ttftMessageCount <= 0 || totals.totalTtftMs < 0) return undefined;
-  return totals.totalTtftMs / totals.ttftMessageCount / 1000;
+  return median(state.sessionAverage.recentTtftSec);
 }
 
 function computeLiveTtftSec(state: StreamMetricsState, isStreaming: boolean, now = Date.now()): number | undefined {
@@ -200,7 +212,7 @@ export function createStreamMetricsTracker(): {
   const state: StreamMetricsState = {
     streamSamples: [],
     messageTimingByKey: new Map(),
-    sessionAverage: { totalTokens: 0, totalDurationMs: 0, totalTtftMs: 0, messageCount: 0, ttftMessageCount: 0 },
+    sessionAverage: { recentTps: [], recentTtftSec: [] },
     activeMessageKey: null,
     activeRequestStartAt: null,
     pruneTimer: null,
@@ -214,7 +226,7 @@ export function createStreamMetricsTracker(): {
   const resetSession = () => {
     state.streamSamples = [];
     state.messageTimingByKey.clear();
-    state.sessionAverage = { totalTokens: 0, totalDurationMs: 0, totalTtftMs: 0, messageCount: 0, ttftMessageCount: 0 };
+    state.sessionAverage = { recentTps: [], recentTtftSec: [] };
     state.activeMessageKey = null;
     state.activeRequestStartAt = null;
     state.version++;
@@ -339,22 +351,25 @@ export function createStreamMetricsTracker(): {
           : Date.now());
 
       const totalTokens = countOutputTokens(message);
+      // For toolUse messages, end the window at the last tool-call START so the
+      // model's generation of tool args is counted, but the tool EXECUTION time
+      // that follows is never folded into the duration (it would deflate TPS).
+      // Tool results are never counted as tokens: usage.output only holds the
+      // model's own completion tokens, and live samples come exclusively from
+      // text_delta / thinking_delta (cleared on toolcall_start + tool execution).
       const endAt = message.stopReason === "toolUse" && timing.lastToolCallAt
         ? timing.lastToolCallAt
         : (typeof message.timestamp === "number" ? message.timestamp : Date.now());
       const durationMs = Math.max(endAt - firstResponseAt, 1);
       const ttftMs = Math.max(firstResponseAt - timing.requestStartAt, 0);
 
-      const next = { ...state.sessionAverage };
-      next.totalTtftMs += ttftMs;
-      next.ttftMessageCount += 1;
-
-      if (totalTokens > 0) {
-        next.totalTokens += totalTokens;
-        next.totalDurationMs += durationMs;
-        next.messageCount += 1;
-      }
-      state.sessionAverage = next;
+      // Rolling-median window: TTFT is recorded for every completed message
+      // (even with 0 output tokens); TPS only when the model produced tokens.
+      const recentTtftSec = [...state.sessionAverage.recentTtftSec, ttftMs / 1000].slice(-ROLLING_WINDOW);
+      const recentTps = totalTokens > 0
+        ? [...state.sessionAverage.recentTps, totalTokens / (durationMs / 1000)].slice(-ROLLING_WINDOW)
+        : state.sessionAverage.recentTps;
+      state.sessionAverage = { recentTps, recentTtftSec };
     }
 
     state.messageTimingByKey.delete(key);
